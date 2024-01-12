@@ -2,6 +2,7 @@ const express = require("express");
 const app = express();
 const cors = require("cors");
 require("dotenv").config();
+const stripe = require("stripe")(process.env.STRIPE_SK_KEY)
 const jwt = require("jsonwebtoken");
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 const port = process.env.PORT || 5000;
@@ -159,20 +160,22 @@ async function run() {
       res.send(result)
     })
 
-    app.patch('/menu/:id',verifyToken,verifyAdmin,async(req,res)=>{
+    app.put('/menu/:id',verifyToken,verifyAdmin,async(req,res)=>{
       const id = req.params.id;
       const menuItem = req.body;
       const query = { _id: new ObjectId(id) };
+      const options = { upsert : true}
       const updatedDoc = {
         $set:{
           name:menuItem.name,
           image:menuItem.image,
+          price:menuItem.price,
           recipe:menuItem.recipe,
           image:menuItem.image,
           category:menuItem.category,
         }
       }
-      const result = await menuCollection.updateOne(query,updatedDoc);
+      const result = await menuCollection.updateOne(query,updatedDoc,options);
       res.send(result);
     })
 
@@ -182,6 +185,21 @@ async function run() {
       const result = await menuCollection.deleteOne(query);
       res.send(result);
     })
+
+    // payment
+    app.post("/create-payment-intent", async (req, res) => {
+      const { price } = req.body;
+      const amount = parseInt(price * 100);
+      const paymentIntent = await stripe.paymentIntents.create({
+        amount: amount,
+        currency: "usd",
+        payment_method_types:['card']
+      });
+    
+      res.send({
+        clientSecret: paymentIntent.client_secret,
+      });
+    });
 
     
 
