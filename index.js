@@ -24,6 +24,9 @@ async function run() {
     const reviewCollection = client.db("BistroFood").collection("reviews");
     const cartCollection = client.db("BistroFood").collection("carts");
     const userCollection = client.db("BistroFood").collection("users");
+    const paymentCollection = client.db("BistroFood").collection("payments");
+
+    
 
     // jwt api
 
@@ -66,11 +69,11 @@ async function run() {
     // user related api
 
     // check admin (true or false)
-    app.get("/users/admin/:email", verifyToken, async (req, res) => {
+    app.get("/users/admin/:email", async (req, res) => {
       const email = req.params.email;
-      if (email !== req.decoded.email) {
-        return res.status(401).send({ message: "Unauthorized access" });
-      }
+      // if (email !== req.decoded.email) {
+      //   return res.status(401).send({ message: "Unauthorized access" });
+      // }
       const user = await userCollection.findOne({ email });
       if (user?.role === "admin") {
         return res.send({ admin: true });
@@ -186,7 +189,13 @@ async function run() {
       res.send(result);
     })
 
-    // payment
+    // review related api
+    app.get("/reviews", async (req, res) => {
+      const result = await reviewCollection.find().toArray();
+      res.send(result);
+    });
+
+    // payment related api
     app.post("/create-payment-intent", async (req, res) => {
       const { price } = req.body;
       const amount = parseInt(price * 100);
@@ -201,13 +210,81 @@ async function run() {
       });
     });
 
-    
+    // save payment information
+    app.post('/payments-info',async(req,res)=>{
+      const paymentInfo = req.body;
+      const insertRes = await paymentCollection.insertOne(paymentInfo);
+      // DELETE ITEM FROM CART
+      const query = { _id : {
+        $in : paymentInfo.cartIds.map(id => new ObjectId(id))
+      }}
+      const deleteRes = await cartCollection.deleteMany(query);
+      res.send({insertRes,deleteRes}) 
+    })
 
-    // review related api
-    app.get("/reviews", async (req, res) => {
-      const result = await reviewCollection.find().toArray();
+    app.get('/payments',verifyToken,async(req,res)=>{
+      const email = req.query.email;
+      if(email !== req.decoded.email){
+        return res.status(403).send({message:'Forbidden access'})
+      }
+      const result = await paymentCollection.find({email}).toArray();
       res.send(result);
-    });
+    })
+
+    app.delete('/payments/:id',verifyToken,async(req,res)=>{
+      const id = req.params.id;
+      const query = { _id: new ObjectId(id) };
+      const result = await paymentCollection.deleteOne(query);
+      res.send(result);
+    })
+
+    // stats related api
+    app.get('/admin-stats',verifyToken,verifyAdmin,async(req,res)=>{
+      const users = await userCollection.estimatedDocumentCount();
+      const orders = await paymentCollection.estimatedDocumentCount();
+      const menuItems = await menuCollection.estimatedDocumentCount();
+      // get revenue (this is not the best way)
+      // const payments = await paymentCollection.find().toArray();
+      // const revenue = payments.reduce( (sum,payment)=> sum + payment.price , 0 );
+
+      // its the best way to get revenue
+      const result = await paymentCollection.aggregate([
+      {
+          $group : {
+          _id : null,
+          totalRevenue : {
+            $sum : '$price'
+          }
+        }
+      }
+      ]).toArray();
+      const revenue = result.length > 0 ? result[0].totalRevenue : 0 ;
+
+      res.send({
+        users,orders,menuItems,revenue
+      })
+    })
+
+    // use aggregate pipeline
+    app.get('/order-stats',async(req,res)=>{
+      const result = await paymentCollection.aggregate([
+        {
+          $unwind : '$menuItemIds'
+        },
+        
+       {
+        $lookup : {
+          from : 'menus',
+          localField : 'menuItemIds',
+          foreignField : '_id',
+          as : 'menuItems'
+        }
+       }
+      ]).toArray();
+     
+      res.send(result)
+    })
+
 
     await client.connect();
     await client.db("admin").command({ ping: 1 });
@@ -221,9 +298,9 @@ async function run() {
 run().catch(console.dir);
 
 app.get("/", (req, res) => {
-  res.send("Bistro server is running...");
+  res.send("BistroFood server is running...");
 });
 
 app.listen(port, (req, res) => {
-  console.log(`Bistro server is running on port : ${port}`);
+  console.log(`BistroFood server is running on port : ${port}`);
 });
